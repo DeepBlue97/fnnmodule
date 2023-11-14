@@ -23,7 +23,10 @@ class YOLOBlock(nn.Module):
 
 
 class YOLOv3Head(nn.Module):
-    def __init__(self):
+    def __init__(self, num_cls):
+        super().__init__()
+
+        self.final_channel = 3*(num_cls+1+4)
         # 大目标特征处理
         self.yoloblock0 = YOLOBlock(in_channel=1024, out_channel=512)
         self.upsample0 = nn.Upsample(scale_factor=2)
