@@ -17,7 +17,6 @@ _img_size = 192
 _feature_map_size = _img_size//4
 
 
-
 class JointBoneLoss(torch.nn.Module):
     def __init__(self, joint_num):
         super(JointBoneLoss, self).__init__()
@@ -41,17 +40,19 @@ class JointBoneLoss(torch.nn.Module):
         loss = torch.sum(loss)/joint_out.shape[0]/len(self.id_i)
         return loss
 
+
 class MovenetLoss(torch.nn.Module):
-    def __init__(self, use_target_weight=False, target_weight=[1], center_weight_path='center_weight_origin.npy', num_classes=-1):
+    def __init__(self, use_target_weight=False, target_weight=[1], center_weight_path='', num_classes=-1):
         super(MovenetLoss, self).__init__()
         self.mse = torch.nn.MSELoss(size_average=True)
         self.use_target_weight = use_target_weight
         self.target_weight=target_weight
 
+        assert num_classes>0
         self.num_classes = num_classes
 
-        self.center_weight = torch.from_numpy(np.load(center_weight_path))
-        self.make_center_w = False
+        self.center_weight = torch.from_numpy(np.load(center_weight_path)) if center_weight_path else None
+        self.make_center_w = False if self.center_weight else True
 
         # self.range_weight_x = torch.from_numpy(np.array([[x for x in range(48)] for _ in range(48)]))
         # self.range_weight_y = self.range_weight_x.T 
@@ -302,7 +303,10 @@ class MovenetLoss(torch.nn.Module):
         # n,1,h,w
         # 计算center heatmap的最大值得到中心点
         if center:
-            heatmap = heatmap*self.center_weight[:heatmap.shape[0],...]
+            if self.center_weight:
+                heatmap = heatmap*self.center_weight[:heatmap.shape[0],...]
+            else:
+                heatmap = heatmap[:heatmap.shape[0],...]
             #加权取最靠近中间的
 
         n,c,h,w = heatmap.shape
