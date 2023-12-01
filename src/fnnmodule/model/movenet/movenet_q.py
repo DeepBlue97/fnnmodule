@@ -2,11 +2,12 @@
 @Fire
 https://github.com/fire717
 """
-import torch
-import torch.nn as nn
 import math
 
-
+import torch
+import torch.nn as nn
+import pytorch_nndct.nn.modules.functional as QF
+from pytorch_nndct import nn as nndct_nn
 
 
 """
@@ -72,7 +73,9 @@ def upsample(inp, oup, scale=2):
                 nn.Conv2d(inp, inp, 3, 1, 1, groups=inp),
                 nn.ReLU(inplace=True),
                 conv_1x1_act2(inp,oup),
-                nn.Upsample(scale_factor=scale, mode='bilinear', align_corners=False))
+                # nn.Upsample(scale_factor=scale, mode='bilinear', align_corners=False)
+                nn.ConvTranspose2d(in_channels=oup, out_channels=oup, kernel_size=4, stride=scale, padding=1)
+                )
 
 
 def IRBlock(oup, hidden_dim):
@@ -117,14 +120,16 @@ class InvertedResidual(nn.Module):
         for i in range(n):
             self.conv2.append(IRBlock(oup, hidden_dim))
 
+        self.add = QF.Add()
+
     def forward(self, x):
         x = self.conv1(x)
 
         for i in range(self.n):
-            x = x + self.conv2[i](x)
+            # x = x + self.conv2[i](x)
+            x = self.add(x, self.conv2[i](x))
 
         return x
-
 
 
 # class MulReshapeArgMax(nn.Module):
@@ -142,7 +147,6 @@ class InvertedResidual(nn.Module):
 #         x = torch.argmax(x, dim=1, keepdim=True)
 
 #         return x
-    
 
 
 
@@ -151,6 +155,7 @@ class Backbone(nn.Module):
         super(Backbone, self).__init__()
         #mobilenet v2
 
+        # self.interpolate = QF.Interpolate(),
 
         input_channel = 32
 
@@ -169,7 +174,11 @@ class Backbone(nn.Module):
                             InvertedResidual(160, 320, 1, 6, 0),
                             conv_1x1_act(320,1280),
                             nn.Conv2d(1280, 64, 1, 1, 0, bias=False),
-                            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+                            # nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+                            # self.interpolate(scale_factor=2, mode='bilinear', align_corners=False),
+                            # nn.ConvTranspose2d()
+                            # nn.ConvTranspose2d(in_channels=64, out_channels=64, kernel_size=3, stride=2, padding=1)
+                            nn.ConvTranspose2d(in_channels=64, out_channels=64, kernel_size=4, stride=2, padding=1)
                         ])
 
 
@@ -182,11 +191,16 @@ class Backbone(nn.Module):
 
         self.conv4 = dw_conv3(24, 24, 1)
 
+        # self.div = DivModule()
+        self.add_1 = QF.Add()
+        self.add_2 = QF.Add()
+        self.add_3 = QF.Add()
 
 
     def forward(self, x):
-        x = x/127.5-1
-
+        # x = x/127.5-1
+        # x = torch.div(x, 127.5) - 1
+        # x = self.div(x, 127.5) - 1
 
         f1 = self.features1(x)
         #print(f1.shape)#1, 24, 48, 48]
@@ -200,19 +214,30 @@ class Backbone(nn.Module):
         f4 = self.features4(f3)
         f3 = self.conv3(f3)
         #print(f4.shape)#[1, 64, 12, 12]
-        f4 += f3
+        # f4 += f3
+        f4 = self.add_1(f4, f3)
 
         f4 = self.upsample2(f4)
         f2 = self.conv2(f2)
-        f4 += f2
+        # f4 += f2
+        f4 = self.add_2(f4, f2)
 
         f4 = self.upsample1(f4)
         f1 = self.conv1(f1)
-        f4 += f1
+        # f4 += f1
+        f4 = self.add_3(f4, f1)
 
         f4 = self.conv4(f4)
 
         return f4
+
+
+# class DivModule(nn.Module):
+#     def __init__(self):
+#         super().__init__()
+    
+#     def forward(self, x, y):
+#         return torch.div(x, y)
 
 
 class Header(nn.Module):
@@ -249,9 +274,12 @@ class Header(nn.Module):
                         nn.Conv2d(96, num_classes*2, 1, 1, 0, bias=True),
                     ])
 
+        # self.div = DivModule()
+
     def argmax2loc(self, x, h=48, w=48):
         ## n,1
-        y0 = torch.div(x,w).long()
+        y0 = torch.div(x, w).long()
+        # y0 = self.div(x,w).long()
         x0 = torch.sub(x, y0*w).long()
         return x0,y0
 
@@ -330,15 +358,15 @@ class MoveNet(nn.Module):
         self.backbone = Backbone()
 
         self.header = Header(num_classes, mode)
-        
 
         self._initialize_weights()
 
+        self.quant_in = nndct_nn.QuantStub()
 
     def forward(self, x):
+        x = self.quant_in(x)
         x = self.backbone(x) # n,24,48,48
         # print(x.shape)
-
         x = self.header(x)
         # print([x0.shape for x0 in x])
 
