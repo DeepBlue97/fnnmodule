@@ -1,4 +1,5 @@
 from fnnmodule import *
+from fnnmodule.base.yolo import DWConv, BaseConv, CSPLayer, Focus, SPPBottleneck
 
 
 def get_cbl(in_channel, out_channel, kernel_size, stride=1, padding=0, eps=0.001, momentum=0.03):
