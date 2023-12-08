@@ -26,6 +26,8 @@ class YOLOXHead(nn.Module):
         in_channels=[256, 512, 1024],
         act="silu",
         depthwise=False,
+        use_l1=False,
+        is_qat=False,
     ):
         """
         Args:
@@ -35,7 +37,7 @@ class YOLOXHead(nn.Module):
         super().__init__()
 
         self.num_classes = num_classes
-        self.decode_in_inference = True  # for deploy, set to False
+        # self.decode_in_inference = True  # for deploy, set to False
 
         self.cls_convs = nn.ModuleList()
         self.reg_convs = nn.ModuleList()
@@ -43,6 +45,10 @@ class YOLOXHead(nn.Module):
         self.reg_preds = nn.ModuleList()
         self.obj_preds = nn.ModuleList()
         self.stems = nn.ModuleList()
+        self.is_qat = is_qat
+        if self.is_qat:
+            self.cat_list = nn.ModuleList()
+            self.quant_outs = nn.ModuleList()
         Conv = DWConv if depthwise else BaseConv
 
         for i in range(len(in_channels)):
@@ -122,13 +128,23 @@ class YOLOXHead(nn.Module):
                     padding=0,
                 )
             )
+            if self.is_qat:
+                self.cat_list.append(QF.Cat())
+                self.quant_outs.append(nndct_nn.DeQuantStub())
 
-        self.use_l1 = False
+        self.use_l1 = use_l1
         self.l1_loss = nn.L1Loss(reduction="none")
         self.bcewithlog_loss = nn.BCEWithLogitsLoss(reduction="none")
         self.iou_loss = IOUloss(reduction="none")
         self.strides = strides
         self.grids = [torch.zeros(1)] * len(in_channels)
+
+        self.is_qat = is_qat
+        # self.is_quanting = False
+
+        if self.is_qat:
+            import pytorch_nndct.nn.modules.functional as QF
+            import pytorch_nndct.nn as nndct_nn
 
     def initialize_biases(self, prior_prob):
         for conv in self.cls_preds:
@@ -141,7 +157,7 @@ class YOLOXHead(nn.Module):
             b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
             conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
 
-    def forward(self, xin, labels=None, imgs=None):
+    def forward(self, xin, labels=None, imgs=None, is_quanting=False):
         outputs = []
         origin_preds = []
         x_shifts = []
@@ -162,8 +178,13 @@ class YOLOXHead(nn.Module):
             reg_output = self.reg_preds[k](reg_feat)
             obj_output = self.obj_preds[k](reg_feat)
 
+            if self.is_qat:
+                output = self.cat_list[k]([reg_output, obj_output, cls_output], 1)
+                output = self.quant_outs[k](output)
+
             if self.training:
                 output = torch.cat([reg_output, obj_output, cls_output], 1)
+                # 预测值转换为输入图中的像素坐标
                 output, grid = self.get_output_and_grid(
                     output, k, stride_this_level, xin[0].type()
                 )
@@ -185,10 +206,13 @@ class YOLOXHead(nn.Module):
                     )
                     origin_preds.append(reg_output.clone())
 
-            else:
-                output = torch.cat(
-                    [reg_output, obj_output.sigmoid(), cls_output.sigmoid()], 1
-                )
+            # else:
+            #     if self.is_quant_infer:
+            #         pass
+            #     else:
+            #         output = torch.cat(
+            #             [reg_output, obj_output.sigmoid(), cls_output.sigmoid()], 1
+            #         )
 
             outputs.append(output)
 
@@ -204,23 +228,36 @@ class YOLOXHead(nn.Module):
                 dtype=xin[0].dtype,
             )
         else:
-            self.hw = [x.shape[-2:] for x in outputs]
-            # [batch, n_anchors_all, 85]
-            outputs = torch.cat(
-                [x.flatten(start_dim=2) for x in outputs], dim=2
-            ).permute(0, 2, 1)
-            if self.decode_in_inference:
-                return self.decode_outputs(outputs, dtype=xin[0].type())
-            else:
+            if is_quanting:
                 return outputs
+            else:
+                self.decode(outputs)
 
+    def aggregate_stage_bbox(self, ):
+        self.hw = [x.shape[-2:] for x in outputs]
+        # [tensor(batch, channel, height=in_h/8, width=in_w/8),
+        #  tensor(batch, channel, height=in_h/16, width=in_w/16),
+        #  tensor(batch, channel, height=in_h/32, width=in_w/32),]
+        #           
+        #      [tensor(batch, channel, in_h/8*in_w/8),
+        #  =>   tensor(batch, channel, in_h/16*in_w/16),
+        #       tensor(batch, channel, in_h/32*in_w/32),]
+        # 
+        #  =>  tensor(batch, 80*80+40*40+20*20, 4+1+num_classes)
+        #           
+        # [batch, n_anchors_all, 85]
+        outputs = torch.cat(
+            [x.flatten(start_dim=2) for x in outputs], dim=2
+        ).permute(0, 2, 1)
+        return outputs
+    
     def get_output_and_grid(self, output, k, stride, dtype):
         grid = self.grids[k]
 
         batch_size = output.shape[0]
         n_ch = 5 + self.num_classes
         hsize, wsize = output.shape[-2:]
-        if grid.shape[2:4] != output.shape[2:4]:
+        if grid.shape[2:4] != output.shape[2:4]:  # grid初始化时和output形状不同，所以这里在第一次时会执行，之后都会跳过
             yv, xv = meshgrid([torch.arange(hsize), torch.arange(wsize)])
             grid = torch.stack((xv, yv), 2).view(1, 1, hsize, wsize, 2).type(dtype)
             self.grids[k] = grid
@@ -234,7 +271,11 @@ class YOLOXHead(nn.Module):
         output[..., 2:4] = torch.exp(output[..., 2:4]) * stride
         return output, grid
 
-    def decode_outputs(self, outputs, dtype):
+    def decode(self, outputs):
+        """将预测值转为bbox(像素坐标), (batch, n_anchors_all, xywh+conf+num_classes)"""
+        outputs = self.aggregate_stage_bbox()
+        outputs[..., 4:] = outputs[..., 4:].sigmoid()
+        
         grids = []
         strides = []
         for (hsize, wsize), stride in zip(self.hw, self.strides):
@@ -244,13 +285,14 @@ class YOLOXHead(nn.Module):
             shape = grid.shape[:2]
             strides.append(torch.full((*shape, 1), stride))
 
+        dtype = outputs[0].type()
         grids = torch.cat(grids, dim=1).type(dtype)
         strides = torch.cat(strides, dim=1).type(dtype)
 
         outputs = torch.cat([
-            (outputs[..., 0:2] + grids) * strides,
-            torch.exp(outputs[..., 2:4]) * strides,
-            outputs[..., 4:]
+            (outputs[..., 0:2] + grids) * strides,  # 预测值加上特征图中的像素坐标，再乘以下采样率即为中心点在输入图中的像素坐标
+            torch.exp(outputs[..., 2:4]) * strides,  # e的预测值次幂，再乘以下采样率即为输入图下的像素单位的宽高
+            outputs[..., 4:]  # 置信度和分类数
         ], dim=-1)
         return outputs
 
@@ -385,7 +427,7 @@ class YOLOXHead(nn.Module):
 
         num_fg = max(num_fg, 1)
         loss_iou = (
-            self.iou_loss(bbox_preds.view(-1, 4)[fg_masks], reg_targets)
+            self.iou_loss(bbox_preds.view(-1, 4)[fg_masks], reg_targets)  # bbox_preds已经为输入图中的像素坐标的xywh
         ).sum() / num_fg
         loss_obj = (
             self.bcewithlog_loss(obj_preds.view(-1, 1), obj_targets)

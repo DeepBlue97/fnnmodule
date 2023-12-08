@@ -4,6 +4,7 @@ import torch.nn as nn
 
 from fnnmodule.head.yolox import YOLOXHead
 from fnnmodule.neck.yolox_pafpn import YOLOPAFPN
+from fnnconfig.utils.str2cls import dict2cls, new_cls
 
 
 class YOLOX(nn.Module):
@@ -13,19 +14,32 @@ class YOLOX(nn.Module):
     and detection results during test.
     """
 
-    def __init__(self, backbone=None, head=None, num_classes=80):
+    def __init__(self, backbone=None, neck=None, head=None
+                #  , num_classes=80
+                 ):
         super().__init__()
-        if backbone is None:
-            backbone = YOLOPAFPN()
-        if head is None:
-            head = YOLOXHead(num_classes)
+        if isinstance(backbone, dict):
+            backbone = dict2cls(backbone)
+
+        if isinstance(neck, dict):
+            neck = dict2cls(neck)
+
+        if isinstance(head, dict):
+            head = dict2cls(head)
+
+        # if backbone is None:
+        #     backbone = YOLOPAFPN()
+        # if head is None:
+        #     head = YOLOXHead(num_classes)
 
         self.backbone = backbone
+        self.neck = neck
         self.head = head
 
     def forward(self, x, targets=None):
         # fpn output content features of [dark3, dark4, dark5]
-        fpn_outs = self.backbone(x)
+        dark_outs = self.backbone(x)
+        fpn_outs = self.neck(dark_outs)
 
         if self.training:
             assert targets is not None

@@ -103,11 +103,14 @@ class CSPDarknet(nn.Module):
         out_features=("dark3", "dark4", "dark5"),
         depthwise=False,
         act="silu",
+        is_qat=False,
     ):
         super().__init__()
         assert out_features, "please provide output features of Darknet"
         self.out_features = out_features
         Conv = DWConv if depthwise else BaseConv
+
+        self.is_qat = is_qat
 
         base_channels = int(wid_mul * 64)  # 64
         base_depth = max(round(dep_mul * 3), 1)  # 3
@@ -124,6 +127,7 @@ class CSPDarknet(nn.Module):
                 n=base_depth,
                 depthwise=depthwise,
                 act=act,
+                is_qat=self.is_qat,
             ),
         )
 
@@ -136,6 +140,7 @@ class CSPDarknet(nn.Module):
                 n=base_depth * 3,
                 depthwise=depthwise,
                 act=act,
+                is_qat=self.is_qat,
             ),
         )
 
@@ -148,13 +153,14 @@ class CSPDarknet(nn.Module):
                 n=base_depth * 3,
                 depthwise=depthwise,
                 act=act,
+                is_qat=self.is_qat,
             ),
         )
 
         # dark5
         self.dark5 = nn.Sequential(
             Conv(base_channels * 8, base_channels * 16, 3, 2, act=act),
-            SPPBottleneck(base_channels * 16, base_channels * 16, activation=act),
+            SPPBottleneck(base_channels * 16, base_channels * 16, activation=act, is_qat=self.is_qat),
             CSPLayer(
                 base_channels * 16,
                 base_channels * 16,
@@ -162,6 +168,7 @@ class CSPDarknet(nn.Module):
                 shortcut=False,
                 depthwise=depthwise,
                 act=act,
+                is_qat=self.is_qat,
             ),
         )
 

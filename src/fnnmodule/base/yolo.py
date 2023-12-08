@@ -123,7 +123,7 @@ class SPPBottleneck(nn.Module):
     """Spatial pyramid pooling layer used in YOLOv3-SPP"""
 
     def __init__(
-        self, in_channels, out_channels, kernel_sizes=(5, 9, 13), activation="silu"
+        self, in_channels, out_channels, kernel_sizes=(5, 9, 13), activation="silu", is_qat=False
     ):
         super().__init__()
         hidden_channels = in_channels // 2
@@ -136,10 +136,18 @@ class SPPBottleneck(nn.Module):
         )
         conv2_channels = hidden_channels * (len(kernel_sizes) + 1)
         self.conv2 = BaseConv(conv2_channels, out_channels, 1, stride=1, act=activation)
+        self.is_qat = is_qat
+        if self.is_qat:
+            import pytorch_nndct.nn.modules.functional as QF
+            import pytorch_nndct.nn as nndct_nn
+            self.cat = QF.Cat()
 
     def forward(self, x):
         x = self.conv1(x)
-        x = torch.cat([x] + [m(x) for m in self.m], dim=1)
+        if self.is_qat:
+            x = self.cat([x] + [m(x) for m in self.m], dim=1)
+        else:
+            x = torch.cat([x] + [m(x) for m in self.m], dim=1)
         x = self.conv2(x)
         return x
 
@@ -156,6 +164,7 @@ class CSPLayer(nn.Module):
         expansion=0.5,
         depthwise=False,
         act="silu",
+        is_qat=False,
     ):
         """
         Args:
@@ -176,12 +185,20 @@ class CSPLayer(nn.Module):
             for _ in range(n)
         ]
         self.m = nn.Sequential(*module_list)
+        self.is_qat = is_qat
+        if self.is_qat:
+            import pytorch_nndct.nn.modules.functional as QF
+            import pytorch_nndct.nn as nndct_nn
+            self.cat = QF.Cat()
 
     def forward(self, x):
         x_1 = self.conv1(x)
         x_2 = self.conv2(x)
         x_1 = self.m(x_1)
-        x = torch.cat((x_1, x_2), dim=1)
+        if self.is_qat:
+            x = self.cat((x_1, x_2), dim=1)
+        else:
+            x = torch.cat((x_1, x_2), dim=1)
         return self.conv3(x)
 
 
