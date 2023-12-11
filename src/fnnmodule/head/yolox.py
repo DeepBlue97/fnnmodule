@@ -181,30 +181,32 @@ class YOLOXHead(nn.Module):
             if self.is_qat:
                 output = self.cat_list[k]([reg_output, obj_output, cls_output], 1)
                 output = self.quant_outs[k](output)
-
-            if self.training:
-                output = torch.cat([reg_output, obj_output, cls_output], 1)
-                # 预测值转换为输入图中的像素坐标
-                output, grid = self.get_output_and_grid(
-                    output, k, stride_this_level, xin[0].type()
-                )
-                x_shifts.append(grid[:, :, 0])
-                y_shifts.append(grid[:, :, 1])
-                expanded_strides.append(
-                    torch.zeros(1, grid.shape[1])
-                    .fill_(stride_this_level)
-                    .type_as(xin[0])
-                )
-                if self.use_l1:
-                    batch_size = reg_output.shape[0]
-                    hsize, wsize = reg_output.shape[-2:]
-                    reg_output = reg_output.view(
-                        batch_size, 1, 4, hsize, wsize
+            else:
+                if self.training:
+                    output = torch.cat([reg_output, obj_output, cls_output], 1)
+                    # 预测值转换为输入图中的像素坐标
+                    output, grid = self.get_output_and_grid(
+                        output, k, stride_this_level, xin[0].type()
                     )
-                    reg_output = reg_output.permute(0, 1, 3, 4, 2).reshape(
-                        batch_size, -1, 4
+                    x_shifts.append(grid[:, :, 0])
+                    y_shifts.append(grid[:, :, 1])
+                    expanded_strides.append(
+                        torch.zeros(1, grid.shape[1])
+                        .fill_(stride_this_level)
+                        .type_as(xin[0])
                     )
-                    origin_preds.append(reg_output.clone())
+                    if self.use_l1:
+                        batch_size = reg_output.shape[0]
+                        hsize, wsize = reg_output.shape[-2:]
+                        reg_output = reg_output.view(
+                            batch_size, 1, 4, hsize, wsize
+                        )
+                        reg_output = reg_output.permute(0, 1, 3, 4, 2).reshape(
+                            batch_size, -1, 4
+                        )
+                        origin_preds.append(reg_output.clone())
+                else:
+                    output = torch.cat([reg_output, obj_output, cls_output], 1)
 
             # else:
             #     if self.is_quant_infer:
@@ -231,9 +233,9 @@ class YOLOXHead(nn.Module):
             if is_quanting:
                 return outputs
             else:
-                self.decode(outputs)
+                return self.decode(outputs)
 
-    def aggregate_stage_bbox(self, ):
+    def aggregate_stage_bbox(self, outputs):
         self.hw = [x.shape[-2:] for x in outputs]
         # [tensor(batch, channel, height=in_h/8, width=in_w/8),
         #  tensor(batch, channel, height=in_h/16, width=in_w/16),
@@ -273,7 +275,7 @@ class YOLOXHead(nn.Module):
 
     def decode(self, outputs):
         """将预测值转为bbox(像素坐标), (batch, n_anchors_all, xywh+conf+num_classes)"""
-        outputs = self.aggregate_stage_bbox()
+        outputs = self.aggregate_stage_bbox(outputs)
         outputs[..., 4:] = outputs[..., 4:].sigmoid()
         
         grids = []
