@@ -157,7 +157,7 @@ class YOLOXHead(nn.Module):
             b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
             conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
 
-    def forward(self, xin, labels=None, imgs=None, is_quanting=False):
+    def forward(self, xin, labels=None, imgs=None, is_decode: bool=False):
         outputs = []
         origin_preds = []
         x_shifts = []
@@ -230,10 +230,10 @@ class YOLOXHead(nn.Module):
                 dtype=xin[0].dtype,
             )
         else:
-            if is_quanting:
-                return outputs
-            else:
+            if is_decode:
                 return self.decode(outputs)
+            else:
+                return outputs
 
     def aggregate_stage_bbox(self, outputs):
         self.hw = [x.shape[-2:] for x in outputs]

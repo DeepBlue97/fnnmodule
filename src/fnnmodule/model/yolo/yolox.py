@@ -36,6 +36,8 @@ class YOLOX(nn.Module):
         self.neck = neck
         self.head = head
 
+        self.is_decode = False
+
     def forward(self, x, targets=None):
         # fpn output content features of [dark3, dark4, dark5]
         dark_outs = self.backbone(x)
@@ -44,7 +46,7 @@ class YOLOX(nn.Module):
         if self.training:
             assert targets is not None
             loss, iou_loss, conf_loss, cls_loss, l1_loss, num_fg = self.head(
-                fpn_outs, targets, x
+                fpn_outs, targets, x, is_decode=self.is_decode
             )
             outputs = {
                 "total_loss": loss,
@@ -55,7 +57,7 @@ class YOLOX(nn.Module):
                 "num_fg": num_fg,
             }
         else:
-            outputs = self.head(fpn_outs)
+            outputs = self.head(fpn_outs, is_decode=self.is_decode)
 
         return outputs
 
