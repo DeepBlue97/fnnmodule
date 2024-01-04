@@ -47,6 +47,8 @@ class YOLOXHead(nn.Module):
         self.stems = nn.ModuleList()
         self.is_qat = is_qat
         if self.is_qat:
+            import pytorch_nndct.nn.modules.functional as QF
+            import pytorch_nndct.nn as nndct_nn
             self.cat_list = nn.ModuleList()
             self.quant_outs = nn.ModuleList()
         Conv = DWConv if depthwise else BaseConv
@@ -142,10 +144,6 @@ class YOLOXHead(nn.Module):
         self.is_qat = is_qat
         # self.is_quanting = False
 
-        if self.is_qat:
-            import pytorch_nndct.nn.modules.functional as QF
-            import pytorch_nndct.nn as nndct_nn
-
     def initialize_biases(self, prior_prob):
         for conv in self.cls_preds:
             b = conv.bias.view(1, -1)
@@ -178,35 +176,37 @@ class YOLOXHead(nn.Module):
             reg_output = self.reg_preds[k](reg_feat)
             obj_output = self.obj_preds[k](reg_feat)
 
-            if self.is_qat:
-                output = self.cat_list[k]([reg_output, obj_output, cls_output], 1)
-                output = self.quant_outs[k](output)
-            else:
-                if self.training:
-                    output = torch.cat([reg_output, obj_output, cls_output], 1)
-                    # 预测值转换为输入图中的像素坐标
-                    output, grid = self.get_output_and_grid(
-                        output, k, stride_this_level, xin[0].type()
-                    )
-                    x_shifts.append(grid[:, :, 0])
-                    y_shifts.append(grid[:, :, 1])
-                    expanded_strides.append(
-                        torch.zeros(1, grid.shape[1])
-                        .fill_(stride_this_level)
-                        .type_as(xin[0])
-                    )
-                    if self.use_l1:
-                        batch_size = reg_output.shape[0]
-                        hsize, wsize = reg_output.shape[-2:]
-                        reg_output = reg_output.view(
-                            batch_size, 1, 4, hsize, wsize
-                        )
-                        reg_output = reg_output.permute(0, 1, 3, 4, 2).reshape(
-                            batch_size, -1, 4
-                        )
-                        origin_preds.append(reg_output.clone())
+
+            # else:
+            if self.training:
+                if self.is_qat:
+                    output = self.cat_list[k]([reg_output, obj_output, cls_output], 1)
+                    output = self.quant_outs[k](output)
                 else:
                     output = torch.cat([reg_output, obj_output, cls_output], 1)
+                # 预测值转换为输入图中的像素坐标
+                output, grid = self.get_output_and_grid(
+                    output, k, stride_this_level, xin[0].type()
+                )
+                x_shifts.append(grid[:, :, 0])
+                y_shifts.append(grid[:, :, 1])
+                expanded_strides.append(
+                    torch.zeros(1, grid.shape[1])
+                    .fill_(stride_this_level)
+                    .type_as(xin[0])
+                )
+                if self.use_l1:
+                    batch_size = reg_output.shape[0]
+                    hsize, wsize = reg_output.shape[-2:]
+                    reg_output = reg_output.view(
+                        batch_size, 1, 4, hsize, wsize
+                    )
+                    reg_output = reg_output.permute(0, 1, 3, 4, 2).reshape(
+                        batch_size, -1, 4
+                    )
+                    origin_preds.append(reg_output.clone())
+            else:
+                output = torch.cat([reg_output, obj_output, cls_output], 1)
 
             # else:
             #     if self.is_quant_infer:
