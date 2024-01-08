@@ -14,10 +14,16 @@ class YOLOX(nn.Module):
     and detection results during test.
     """
 
-    def __init__(self, backbone=None, neck=None, head=None
-                #  , num_classes=80
-                 ):
+    def __init__(
+            self,
+            backbone=None,
+            neck=None,
+            head=None,
+            is_qat=False,
+        ):
         super().__init__()
+        self.is_qat = is_qat
+
         if isinstance(backbone, dict):
             backbone = dict2cls(backbone)
 
@@ -38,8 +44,15 @@ class YOLOX(nn.Module):
 
         self.is_decode = False
 
+        if self.is_qat:
+            from pytorch_nndct import nn as nndct_nn
+            self.quant_in = nndct_nn.QuantStub()
+            
+
     def forward(self, x, targets=None):
         # fpn output content features of [dark3, dark4, dark5]
+        if self.is_qat:
+            x = self.quant_in(x)
         dark_outs = self.backbone(x)
         fpn_outs = self.neck(dark_outs)
 

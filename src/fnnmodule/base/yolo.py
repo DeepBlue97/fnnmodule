@@ -86,6 +86,7 @@ class Bottleneck(nn.Module):
         expansion=0.5,
         depthwise=False,
         act="silu",
+        is_qat=False,
     ):
         super().__init__()
         hidden_channels = int(out_channels * expansion)
@@ -93,11 +94,18 @@ class Bottleneck(nn.Module):
         self.conv1 = BaseConv(in_channels, hidden_channels, 1, stride=1, act=act)
         self.conv2 = Conv(hidden_channels, out_channels, 3, stride=1, act=act)
         self.use_add = shortcut and in_channels == out_channels
+        self.is_qat = is_qat
+        if self.is_qat:
+            import pytorch_nndct.nn.modules.functional as QF
+            self.sc_add = QF.Add()
 
     def forward(self, x):
         y = self.conv2(self.conv1(x))
         if self.use_add:
-            y = y + x
+            if self.is_qat:
+                y = self.sc_add(y, x)
+            else:
+                y = y + x
         return y
 
 
@@ -174,18 +182,19 @@ class CSPLayer(nn.Module):
         """
         # ch_in, ch_out, number, shortcut, groups, expansion
         super().__init__()
+        self.is_qat = is_qat
+
         hidden_channels = int(out_channels * expansion)  # hidden channels
         self.conv1 = BaseConv(in_channels, hidden_channels, 1, stride=1, act=act)
         self.conv2 = BaseConv(in_channels, hidden_channels, 1, stride=1, act=act)
         self.conv3 = BaseConv(2 * hidden_channels, out_channels, 1, stride=1, act=act)
         module_list = [
             Bottleneck(
-                hidden_channels, hidden_channels, shortcut, 1.0, depthwise, act=act
+                hidden_channels, hidden_channels, shortcut, 1.0, depthwise, act=act, is_qat=self.is_qat
             )
             for _ in range(n)
         ]
         self.m = nn.Sequential(*module_list)
-        self.is_qat = is_qat
         if self.is_qat:
             import pytorch_nndct.nn.modules.functional as QF
             import pytorch_nndct.nn as nndct_nn

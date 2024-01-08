@@ -106,17 +106,18 @@ class CSPDarknet(nn.Module):
         is_qat=False,
     ):
         super().__init__()
+        self.is_qat = is_qat
+
         assert out_features, "please provide output features of Darknet"
         self.out_features = out_features
         Conv = DWConv if depthwise else BaseConv
-
-        self.is_qat = is_qat
 
         base_channels = int(wid_mul * 64)  # 64
         base_depth = max(round(dep_mul * 3), 1)  # 3
 
         # stem
-        self.stem = Focus(3, base_channels, ksize=3, act=act)
+        # self.stem = Focus(3, base_channels, ksize=3, act=act)
+        self.stem = BaseConv(3, base_channels, ksize=3, stride=2, act=act)
 
         # dark2
         self.dark2 = nn.Sequential(
