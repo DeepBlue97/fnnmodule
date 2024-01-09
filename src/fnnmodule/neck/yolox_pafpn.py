@@ -25,12 +25,12 @@ class YOLOPAFPN(nn.Module):
         is_qat=False,
     ):
         super().__init__()
+        self.is_qat = is_qat
+
         # self.backbone = CSPDarknet(depth, width, depthwise=depthwise, act=act)
         self.in_features = in_features
         self.in_channels = in_channels
         Conv = DWConv if depthwise else BaseConv
-
-        self.is_qat = is_qat
 
         self.upsample = nn.Upsample(scale_factor=2, mode="nearest")
         self.lateral_conv0 = BaseConv(
@@ -43,6 +43,7 @@ class YOLOPAFPN(nn.Module):
             False,
             depthwise=depthwise,
             act=act,
+            is_qat=self.is_qat,
         )  # cat
 
         self.reduce_conv1 = BaseConv(
@@ -55,6 +56,7 @@ class YOLOPAFPN(nn.Module):
             False,
             depthwise=depthwise,
             act=act,
+            is_qat=self.is_qat,
         )
 
         # bottom-up conv
@@ -68,6 +70,7 @@ class YOLOPAFPN(nn.Module):
             False,
             depthwise=depthwise,
             act=act,
+            is_qat=self.is_qat,
         )
 
         # bottom-up conv
@@ -81,6 +84,7 @@ class YOLOPAFPN(nn.Module):
             False,
             depthwise=depthwise,
             act=act,
+            is_qat=self.is_qat,
         )
 
         if self.is_qat:

@@ -206,7 +206,11 @@ class YOLOXHead(nn.Module):
                     )
                     origin_preds.append(reg_output.clone())
             else:
-                output = torch.cat([reg_output, obj_output, cls_output], 1)
+                if self.is_qat:
+                    output = self.cat_list[k]([reg_output, obj_output, cls_output], 1)
+                    output = self.quant_outs[k](output)
+                else:
+                    output = torch.cat([reg_output, obj_output, cls_output], 1)
 
             # else:
             #     if self.is_quant_infer:
