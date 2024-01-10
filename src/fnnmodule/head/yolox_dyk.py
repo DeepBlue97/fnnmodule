@@ -331,6 +331,11 @@ class YOLOXHead(nn.Module):
         obj_preds = outputs[:, :, 4].unsqueeze(-1)  # [batch, n_anchors_all, 1]
         cls_preds = outputs[:, :, 5:]  # [batch, n_anchors_all, n_cls]
 
+        # # debug loss nan
+        # print(f"bbox_preds nan={torch.isnan(bbox_preds).sum().item()}")
+        # print(f"obj_preds nan={torch.isnan(obj_preds).sum().item()}")
+        # print(f"cls_preds nan={torch.isnan(cls_preds).sum().item()}")
+
         # calculate targets
         nlabel = (labels.sum(dim=2) > 0).sum(dim=1)  # number of objects
 
