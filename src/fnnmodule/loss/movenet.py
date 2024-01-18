@@ -52,7 +52,7 @@ class MovenetLoss(torch.nn.Module):
         self.num_classes = num_classes
 
         self.center_weight = torch.from_numpy(np.load(center_weight_path)) if center_weight_path else None
-        self.make_center_w = False if self.center_weight else True
+        self.make_center_w = False if self.center_weight is not None else True
 
         # self.range_weight_x = torch.from_numpy(np.array([[x for x in range(48)] for _ in range(48)]))
         # self.range_weight_y = self.range_weight_x.T 
@@ -303,7 +303,7 @@ class MovenetLoss(torch.nn.Module):
         # n,1,h,w
         # 计算center heatmap的最大值得到中心点
         if center:
-            if self.center_weight:
+            if self.center_weight is not None:
                 heatmap = heatmap*self.center_weight[:heatmap.shape[0],...]
             else:
                 heatmap = heatmap[:heatmap.shape[0],...]
