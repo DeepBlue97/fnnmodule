@@ -28,6 +28,7 @@ class YOLOXHead(nn.Module):
         depthwise=False,
         use_l1=False,
         is_qat=False,
+        device='cpu',
     ):
         """
         Args:
@@ -35,6 +36,8 @@ class YOLOXHead(nn.Module):
             depthwise (bool): whether apply depthwise conv in conv branch. Defalut value: False.
         """
         super().__init__()
+
+        self.device = torch.device(device) if type(device) == str else device
 
         self.num_classes = num_classes
         # self.decode_in_inference = True  # for deploy, set to False
@@ -139,7 +142,7 @@ class YOLOXHead(nn.Module):
         self.bcewithlog_loss = nn.BCEWithLogitsLoss(reduction="none")
         self.iou_loss = IOUloss(reduction="none")
         self.strides = strides
-        self.grids = [torch.zeros(1)] * len(in_channels)
+        self.grids = [torch.zeros(1).to(self.device)] * len(in_channels)
 
         self.is_qat = is_qat
         # self.is_quanting = False
